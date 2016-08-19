@@ -1,23 +1,23 @@
 <?php
 
-if( !defined('D3_WORD_CLOUD_WIDGET') ) return;
+if( !defined('WORD_CLOUD') ) return;
 
 if( !class_exists('WP_List_Table') )
 	require_once( ABSPATH . 'wp-admin/includes/class-wp-list-table.php' );
 
-if( !class_exists('D3WordCloudWidget_Model') )
-	require_once( D3_WORD_CLOUD_WIDGET_PLUGIN_PATH . '/classes/model/model.php' );
+if( !class_exists('WordCloud_Model') )
+	require_once( WORD_CLOUD_PLUGIN_PATH . '/classes/model/model.php' );
 
 
 /**
  * The WP_List_Table class for the Clouds table.
  * 
- * @package    d3-word-cloud-widget
+ * @package    word-cloud
  * @subpackage classes
  * @author     Crystal Barton <atrus1701@gmail.com>
  */
-if( !class_exists('D3WordCloudWidget_CloudListTable') ):
-class D3WordCloudWidget_CloudListTable extends WP_List_Table
+if( !class_exists('WordCloud_CloudListTable') ):
+class WordCloud_CloudListTable extends WP_List_Table
 {
 	/**
 	 * Parent admin page.
@@ -26,8 +26,8 @@ class D3WordCloudWidget_CloudListTable extends WP_List_Table
 	private $parent;
 
 	/**
-	 * The main D3 Word Cloud Widget model.
-	 * @var  D3WordCloudWidget_Model
+	 * The main Word Cloud model.
+	 * @var  WordCloud_Model
 	 */
 	private $model;
 	
@@ -38,7 +38,7 @@ class D3WordCloudWidget_CloudListTable extends WP_List_Table
 	public function __construct( $parent )
 	{
 		$this->parent = $parent;
-		$this->model = D3WordCloudWidget_Model::get_instance();
+		$this->model = WordCloud_Model::get_instance();
 	}
 	
 
@@ -49,8 +49,8 @@ class D3WordCloudWidget_CloudListTable extends WP_List_Table
 	{
 		parent::__construct(
             array(
-                'singular' => 'd3-word-cloud-widget-cloud',
-                'plural'   => 'd3-word-cloud-widget-clouds',
+                'singular' => 'word-cloud-cloud',
+                'plural'   => 'word-cloud-clouds',
                 'ajax'     => false
             )
         );
@@ -73,14 +73,15 @@ class D3WordCloudWidget_CloudListTable extends WP_List_Table
 		$cloud_count = $this->model->get_cloud_count();
 	
 		$current_page = $this->get_pagenum();
-		$per_page = $this->parent->get_screen_option( 'd3-word-cloud-widget_clouds_per_page' );
+		$per_page = $this->parent->get_screen_option( 'word-cloud_clouds_per_page' );
 
 		$this->set_pagination_args( array(
     		'total_items' => $cloud_count,
     		'per_page'    => $per_page
   		) );
   		
-  		$this->items = $this->model->get_clouds( ($current_page-1)*$per_page, $per_page );
+  		$offset = ( $current_page - 1 ) * $per_page;
+		$this->items = $this->model->get_filtered_cloud_list( $offset, $per_page, true );
 	}
 
 
@@ -92,6 +93,8 @@ class D3WordCloudWidget_CloudListTable extends WP_List_Table
 	{
 		return array(
 			'name' => 'Name',
+			'settings' => 'Settings',
+			'cache' => 'Cache',
 		);
 	}
 	
@@ -150,17 +153,55 @@ class D3WordCloudWidget_CloudListTable extends WP_List_Table
 	/**
 	 * Generates the html for the cloud name column.
 	 * @param  array  $item  The item for the current row.
-	 * @return  string  The heml for the cloud name and actions.
+	 * @return  string  The html for the cloud name and actions.
 	 */
-	public function column_name($item)
+	public function column_name( $item )
 	{
 		$actions = array(
-            'edit' => sprintf( '<a href="%s">Edit</a>', 'admin.php?page=clouds&tab=edit&name='.$item['name'] ),
-            'remove' => sprintf( '<a href="%s">Remove</a>', 'admin.php?page=clouds&tab=delete&name='.$item['name'] ),
-        );
-
+			'edit' => sprintf( '<a href="%s">Edit</a>', 'admin.php?page=word-clouds&tab=edit&name=' . $item['name'] ),
+			'remove' => sprintf( '<a href="%s">Remove</a>', 'admin.php?page=word-clouds&tab=delete&name=' . $item['name'] ),
+		);
+		
 		return sprintf( '%1$s<br/>%2$s', $item['name'],  $this->row_actions($actions) );
 	}
+	
+	
+	/**
+	 * Generates the html for the cloud settings column.
+	 * @param  array  $item  The item for the current row.
+	 * @return  string  The heml for the cloud settings column.
+	 */
+	public function column_settings( $item )
+	{
+		$html = '';
+		$html .= '<strong>Post Types:</strong> ' . esc_html( implode( ', ', $item['post_types'] ) );
+		$html .= '<br />';
+		$html .= '<strong>Taxonomies:</strong> ' . esc_html( implode( ', ', $item['taxonomies'] ) );
+		$html .= '<br />';
+		if( 'none' != $item['filterby_taxonomy'] ) {
+			$html .= '<strong>Filter:</strong> ' . 
+				esc_html( $item['filterby_taxonomy'] ) . ' / ' . 
+				esc_html( $item['filterby_terms'] );
+		}
+		
+		return $html;
+	}
+	
+	
+	/**
+	 * Generates the html for the cloud cache column.
+	 * @param  array  $item  The item for the current row.
+	 * @return  string  The heml for the cloud cache column.
+	 */
+	public function column_cache( $item )
+	{
+		if( false === $item['cached'] ) {
+			return 'No valid cache';
+		}
+		
+		return esc_html( $item['cached'] );
+	}
+	
 	
 } // class OrgHub_UsersListTable extends WP_List_Table
 endif; // if( !class_exists('OrgHub_UsersListTable') ):

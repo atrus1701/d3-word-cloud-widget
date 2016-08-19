@@ -1,21 +1,21 @@
 <?php
 
 require_once( __DIR__.'/widget-shortcode-control.php' );
-require_once( D3_WORD_CLOUD_WIDGET_PLUGIN_PATH . '/classes/model.php' );
+require_once( WORD_CLOUD_PLUGIN_PATH . '/classes/model.php' );
 
 
 /**
- * The D3WordCloud_WidgetShortcodeControl class for the "D3 Word Cloud" plugin.
+ * The WordCloud_WidgetShortcodeControl class for the "Word Cloud" plugin.
  * Derived from the official WP RSS widget.
  * 
  * Shortcode Example:
- * [d3_word_cloud title="My Word Cloud" post_types="post,connection" taxonomies="connection-group,connection-link" minimum_count="1" maximum_words="250" orientation="horizontal" font_family="Georgia" font_size="10,100" font_color="green,blue,black" canvas_size="500,500"]
+ * [word_cloud title="My Word Cloud" post_types="post,connection" taxonomies="connection-group,connection-link" minimum_count="1" maximum_words="250" orientation="horizontal" font_family="Georgia" font_size="10,100" font_color="green,blue,black" canvas_size="500,500"]
  * 
  * @package    clas-buttons
  * @author     Crystal Barton <atrus1701@gmail.com>
  */
-if( !class_exists('D3WordCloud_WidgetShortcodeControl') ):
-class D3WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
+if( !class_exists('WordCloud_WidgetShortcodeControl') ):
+class WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
 {
 	
 	/**
@@ -25,10 +25,10 @@ class D3WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
 	public function __construct()
 	{
 		$widget_ops = array(
-			'description'	=> 'Creates a D3 word cloud using selected categories and tags.',
+			'description'	=> 'Creates a Word Cloud using selected categories and tags.',
 		);
 		
-		parent::__construct( 'd3-word-cloud', 'D3 Word Cloud', $widget_ops );
+		parent::__construct( 'word-cloud', 'Word Cloud', $widget_ops );
 	}
 	
 	
@@ -39,7 +39,7 @@ class D3WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
 	{
 		wp_enqueue_script( 'd3-library', plugins_url( '/scripts/d3.min.js' , __FILE__ ), '3.0.min' );
 		wp_enqueue_script( 'd3-layout-cloud', plugins_url( '/scripts/d3.layout.cloud.js' , __FILE__ ), array('d3-library'), '1.0.5' );
-		wp_enqueue_script( 'd3-word-cloud', plugins_url( '/scripts/cloud.js' , __FILE__ ), array('d3-library', 'd3-layout-cloud'), '1.0.1' );
+		wp_enqueue_script( 'word-cloud', plugins_url( '/scripts/cloud.js' , __FILE__ ), array('d3-library', 'd3-layout-cloud'), '1.0.1' );
 	}
 	
 	
@@ -53,7 +53,7 @@ class D3WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
 		$options = $this->merge_options( $options );
 		extract( $options );
 		
-		$model = D3WordCloudWidget_Model::get_instance();
+		$model = WordCloud_Model::get_instance();
 		$clouds = $model->get_all_clouds( true );
 		
 		?>
@@ -114,7 +114,7 @@ class D3WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
 			return;
 		}
 		
-		$model = D3WordCloudWidget_Model::get_instance();
+		$model = WordCloud_Model::get_instance();
 		
 		$cloud = $model->get_cloud( $name );
 		if( ! $cloud ) {
@@ -130,18 +130,49 @@ class D3WordCloud_WidgetShortcodeControl extends WidgetShortcodeControl
 		
 		
 		$terms = array();
+		$count = 1;
 		foreach( $cache['terms'] as $term_id => $term_count )
 		{
+			if( $term_count < $minimum_count || $count > $maximum_words ) {
+				break;
+			}
+			
 			$term_object = get_term_by( 'term_taxonomy_id', $term_id );
+// 			if( function_exists( 'mt_get_url' ) )
+// 			{
+// 				$type = MTType::FilteredArchive;
+// 				$post_types = $cache['settings']['post_types'];
+// 				$taxonomies = array_merge( 
+// 					$cache['settings']['taxonomies'], 
+// 					array( $cache['settings']['filterby_taxonomy'] )
+// 				);
+// 				$tax_terms = array(
+// 					$cache['settings']['filterby_taxonomy'] => 
+// 						explode( ';', $cache['settings']['filterby_terms'] ),
+// 				);
+// 				if( ! array_key_exists( $term_object->taxonomy ) ) {
+// 					$tax_terms[ $term_object->taxonomy ] = array();
+// 				}
+// 				$tax_terms[ $term_object->taxonomy ][] = $term_object->slug;
+// 				
+// 				$url = mt_get_url( $type, $post_types, $taxonomies, 0, $tax_terms );
+// 			}
+// 			else
+// 			{
+				$url = get_term_link( $term_id );
+// 			}
+			
 			$terms[] = array(
 				'name' => $term_object->name,
 				'count' => $term_count,
-				'url' => get_term_link( $term_id ),
+				'url' => $url 
 			);
+			
+			$count++;
 		}
 
 		echo $args['before_widget'];
-		echo '<div id="d3-word-cloud-control-' . self::$index . '" class="wscontrol d3-word-cloud-control">';
+		echo '<div id="word-cloud-control-' . self::$index . '" class="wscontrol word-cloud-control">';
 		
 		if( ! empty( $title ) )
 		{

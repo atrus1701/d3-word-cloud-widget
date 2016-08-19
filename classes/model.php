@@ -1,17 +1,20 @@
 <?php
+require_once( WORD_CLOUD_PLUGIN_PATH . '/classes/output.php' );
+
+
 /**
- * The main model for the D3 Word Cloud Widget plugin.
+ * The main model for the Word Cloud plugin.
  * 
- * @package    d3-word-cloud-widget
+ * @package    word-cloud
  * @subpackage classes/model
  * @author     Crystal Barton <atrus1701@gmail.com>
  */
-if( !class_exists('D3WordCloudWidget_Model') ):
-class D3WordCloudWidget_Model
+if( !class_exists('WordCloud_Model') ):
+class WordCloud_Model
 {
 	/**
 	 * The only instance of the current model.
-	 * @var  D3WordCloudWidget_Model
+	 * @var  WordCloud_Model
 	 */	
 	private static $instance = null;
 	
@@ -38,13 +41,13 @@ class D3WordCloudWidget_Model
 
 	/**
 	 * Get the only instance of this class.
-	 * @return  D3WordCloudWidget_Model  A singleton instance of the model class.
+	 * @return  WordCloud_Model  A singleton instance of the model class.
 	 */
 	public static function get_instance()
 	{
 		if( self::$instance	=== null )
 		{
-			self::$instance = new D3WordCloudWidget_Model();
+			self::$instance = new WordCloud_Model();
 			self::$instance->setup_models();
 		}
 		return self::$instance;
@@ -61,7 +64,7 @@ class D3WordCloudWidget_Model
 	 */
 	public function clear_log()
 	{
-		file_put_contents( D3_WORD_CLOUD_WIDGET_LOG_FILE );
+		file_put_contents( WORD_CLOUD_LOG_FILE );
 	}
 	
 
@@ -76,7 +79,7 @@ class D3WordCloudWidget_Model
 		$text = print_r( $text, true );
 		if( $newline ) $text .= "\n";
 		$text = str_pad( $username, 8, ' ', STR_PAD_RIGHT ).' : '.$text;
-		file_put_contents( D3_WORD_CLOUD_WIDGET_LOG_FILE, $text, FILE_APPEND );
+		file_put_contents( WORD_CLOUD_LOG_FILE, $text, FILE_APPEND );
 	}	
 
 
@@ -86,121 +89,299 @@ class D3WordCloudWidget_Model
 	
 	
 	/**
-	 * 
+	 * Get a filtered list of clouds.
+	 * @param  int  $offset  The offset of the cloud list.
+	 * @param  int  $limit  The maximum number of clouds to return.
+	 * @param bool  $get_settings  True if list of clouds should include settings.
+	 * @return  arrray  The filtered list of the clouds.
 	 */
-	public function update_cloud( $cloud_name, $settings )
+	public function get_filtered_cloud_list( $offset, $limit, $get_settings = false )
 	{
-		$settings['errors'] = $this->verify_settings( $cloud_name, $settings );
+		$cloud_list = $this->get_cloud_list();
+		if( count( $cloud_list ) < $offset ) {
+			return array();
+		}
+		
+		sort( $cloud_list );
+		$cloud_list = array_splice( $cloud_list, $offset, $limit );
+		
+		if( $get_settings )
+		{
+			$clouds = array();
+			foreach( $cloud_list as $cloud_name )
+			{
+				$clouds[ $cloud_name ] = $this->get_cloud_settings( $cloud_name );
+				$cache = $this->get_cloud_cache( $cloud_name, true );
+				$clouds[ $cloud_name ]['cached'] = ( false === $cache ? false : $cache['datetime'] );
+			}
+			
+			$cloud_list = $clouds;
+			$clouds = null;
+		}
+		
+		return $cloud_list;
+	}
+	
+
+	/**
+	 * Adds a cloud to the cloud list.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @param  array  $settings  The cloud's settings.
+	 * @return  array  The altered settings with any errors.
+	 */
+	public function add_cloud( $settings )
+	{
+		$cloud_list = $this->get_cloud_list();
+		
+		// Check for errors.
+		$this->verify_cloud_settings( $settings );
+		if( in_array( $settings['name'], $cloud_list ) ) {
+			$settings['errors']['name_exists'] = $settings['name'] . ' already exists.';
+		}
+		
+		// Errors were found.
 		if( 0 < count( $settings['errors'] ) ) {
 			return $settings;
 		}
+		
+		// Add the name to the cloud list.
+		$cloud_list[] = $settings['name'];
+		$this->update_cloud_list( $cloud_list );
+		
+		// Add the cloud settings.
+		update_option( WORD_CLOUD_SETTINGS . '-' . $settings['name'], $settings );
+		return $settings;
+	}
 
-		$clouds = $this->get_all_clouds();
 
-		if( '' !== $cloud_name )
+	/**
+	 * Update a cloud and its settings.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @param  array  $settings  The cloud's settings.
+	 * @return  array  The altered settings with any errors.
+	 */
+	public function update_cloud( $cloud_name, $settings )
+	{
+		$cloud_list = $this->get_cloud_list();
+		
+		// Check for errors.
+		$this->verify_cloud_settings( $settings );
+		if( ! in_array( $cloud_name, $cloud_list ) ) {
+			$settings['errors']['name_exists'] = $settings['name'] . ' does not exist.';
+		} elseif( $cloud_name !== $settings['name'] && 
+		          in_array( $settings['name'], $cloud_list ) ) {
+			$settings['errors']['name_exists'] = $settings['name'] . ' already exists.';
+		}
+		
+		// Errors were found.
+		if( 0 < count( $settings['errors'] ) ) {
+			return $settings;
+		}
+		
+		// Update the cloud settings.
+		return $this->update_cloud_settings( $cloud_name, $settings );
+	}
+	
+	
+	/**
+	 * Remove a cloud name, settings, and cache.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 */
+	public function remove_cloud( $cloud_name )
+	{
+		$this->remove_from_cloud_list( $cloud_name );
+		$this->remove_cloud_settings( $cloud_name );
+		$this->remove_cloud_cache( $cloud_name );
+	}
+	
+	
+	/**
+	 * Get the number of clouds.
+	 * @return  int  The number of clouds.
+	 */
+	public function get_cloud_count()
+	{
+		return count( $this->get_cloud_list() );
+	}
+	
+	
+	/**
+	 * Determines if a cloud name is in the cloud list.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @return  bool  True if the name is in the cloud list, otherwise False.
+	 */
+	public function is_existing_cloud_name( $cloud_name )
+	{
+		return in_array( $cloud_name, $this->get_cloud_list() );
+	}
+	
+	
+	/**
+	 * Get a list of cloud names.
+	 * @return  array  A list of cloud names.
+	 */
+	public function get_cloud_list()
+	{
+		return get_option( WORD_CLOUD_LIST, array() );
+	}
+	
+	
+	/**
+	 * Update the list of cloud names.
+	 * @param  array  $list  A list of cloud names.
+	 */
+	protected function update_cloud_list( $list )
+	{
+		update_option( WORD_CLOUD_LIST, $list );
+	}
+	
+	
+	/**
+	 * Add a cloud name to the cloud list.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @return  bool  True if cloud name existed and was removed, otherwise False.
+	 */
+	protected function add_to_cloud_list( $cloud_name )
+	{
+		$cloud_list = $this->get_cloud_list();
+		
+		if( in_array( $cloud_name, $cloud_list ) ) {
+			return false;
+		}
+		
+		$cloud_list[] = $cloud_name;
+		$this->update_cloud_list( $cloud_list );
+		return true;
+	}
+	
+	
+	/**
+	 * Remove a cloud name from the cloud list.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @return  bool  True if the cloud exists and was removed, otherwise False.
+	 */
+	protected function remove_from_cloud_list( $cloud_name )
+	{
+		$cloud_list = $this->get_cloud_list();
+		
+		$index = -1;
+		for( $i = 0; $i < count( $cloud_list ); $i++ ) {
+			if( $cloud_list[ $i ] === $cloud_name ) {
+				$index = $i;
+				break;
+			}
+		}
+		
+		if( -1 === $index ) {
+			return false;
+		}
+		
+		array_splice( $cloud_list, $index, 1 );
+		$this->update_cloud_list( $cloud_list );
+		return true;
+	}
+	
+	
+	/**
+	 * Get a list of cloud names.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @return  array  The settings for the cloud.
+	 */
+	public function get_cloud_settings( $cloud_name )
+	{
+		if( ! $this->is_existing_cloud_name( $cloud_name ) ) {
+			return false;
+		}
+	
+		return $this->merge_cloud_settings(
+			get_option( WORD_CLOUD_SETTINGS . '-' . $cloud_name, array() )
+		);
+	}
+	
+	
+	/**
+	 * Update the settings for a cloud.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @param  array  $settings  The new settings.
+	 * @return  array  The modified settings with errors.
+	 */
+	protected function update_cloud_settings( $cloud_name, $settings )
+	{
+		$cloud_settings = $this->get_cloud_settings( $cloud_name );
+		if( $cloud_settings )
 		{
 			$check = array( 
 				'post_types', 'taxonomies', 'filterby_taxonomy', 'filterby_terms' 
 			);
 			foreach( $check as $c )
 			{
-				if( $clouds[ $cloud_name ][ $c ] != $settings[ $c ] ) {
-					$this->remove_cache( $cloud_name );
+				if( $cloud_settings[ $c ] != $settings[ $c ] ) {
+					$this->remove_cloud_cache( $cloud_name );
 					break;
 				}
 			}
 		}
 		
-		if( '' !== $cloud_name && $cloud_name !== $settings['name'] ) {
-			unset( $clouds[ $cloud_name ]  );
-			$this->rename_cache( $cloud_name, $settings['name'] );
+		if( $cloud_name !== $settings['name'] ) {
+			$this->remove_from_cloud_list( $cloud_name );
+			$this->add_to_cloud_list( $settings['name'] );
+			$this->rename_cloud_settings( $cloud_name, $settings['name'] );
+			$this->rename_cloud_cache( $cloud_name, $settings['name'] );
 		}
 		
-		$clouds[ $settings['name'] ] = $settings;
-		update_option( D3_WORD_CLOUD_WIDGET_CLOUDS, $clouds );
-		
+		update_option( WORD_CLOUD_SETTINGS . '-' . $settings['name'], $settings );
 		return $settings;
 	}
 	
 	
 	/**
-	 * 
+	 * Remove a cloud's settings.
+	 * @param  string  $cloud_name  The name of the cloud.
 	 */
-	protected function verify_settings( $cloud_name, $settings )
+	protected function remove_cloud_settings( $cloud_name )
 	{
-		$errors = array();
-		$clouds = $this->get_all_clouds();
-		
-		if( empty( $settings['name'] ) )
-		{
-			$errors['name'] = 'Please specify a cloud name.';
-		} 
-		else
-		{
-			if( ( '' === $cloud_name ) || ( $cloud_name !== $settings['name'] ) ) {
-				if( array_key_exists( $settings['name'], $clouds ) ) {
-					$errors['name'] = $settings['name'] . ' already exists.';
-				}
-			}
-		}
-		
-		return $errors;
+		delete_option( WORD_CLOUD_SETTINGS . '-' . $cloud_name );
 	}
 	
 	
 	/**
-	 * 
+	 * Renames a cloud settings to the new cloud name.
+	 * @param  string  $old_cloud_name  The cloud's old name.
+	 * @param  string  $new_cloud_name  The cloud's new name.
 	 */
-	public function delete_cloud( $cloud_name )
+	protected function rename_cloud_settings( $old_cloud_name, $new_cloud_name )
 	{
-		$clouds = $this->get_all_clouds();
-		unset( $clouds[ $cloud_name ]  );
-		update_option( D3_WORD_CLOUD_WIDGET_CLOUDS, $clouds );
-	}	
-	
-	
-	/**
-	 * 
-	 */
-	public function get_cloud_count()
-	{
-		$clouds = $this->get_all_clouds();
-		return count( $clouds );
+		$settings = $this->get_cloud_settings( $old_cloud_name );
+		$this->remove_cloud_settings( $old_cloud_name );
+		update_option( $new_cloud_name, $settings );
 	}
 	
 	
 	/**
-	 * 
+	 * Gets the cache for the cloud.  If validate is true, then will also try to determine
+	 * if the found cache is valid.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @param  bool  $validate  True if validation of cache is needed, otherwise False.
+	 * @return  array|bool  The cache for the cloud, or False if error occurs.
 	 */
-	public function get_clouds( $offset, $limit, $process = false )
+	public function get_cloud_cache( $cloud_name, $validate = false )
 	{
-		$clouds = $this->get_all_clouds();
-		
-		if( count( $clouds ) < $offset ) {
-			return array();
+		if( ! $this->is_existing_cloud_name( $cloud_name ) ) {
+			return false;
 		}
 		
-		$clouds = array_splice( $clouds, $offset, $limit );
-		
-		if( $process ) {
-			foreach( $clouds as &$cloud ) {
-				$cloud = $this->merge_cloud_settings( $cloud );
-			}
+		$cloud_cache = get_option( WORD_CLOUD_CACHE . '-' . $cloud_name, false );
+		if( ! $validate ) {
+			return $cloud_cache;
+		}
+
+		$cloud_settings = $this->get_cloud_settings( $cloud_name );
+		if( ! $cloud_settings ) {
+			return false;
 		}
 		
-		return $clouds;
-	}
-	
-	
-	/**
-	 * 
-	 */
-	public function get_cloud( $cloud_name )
-	{
-		$clouds = $this->get_all_clouds();
-		
-		if( array_key_exists( $cloud_name, $clouds ) ) {
-			return $this->merge_cloud_settings( $clouds[ $cloud_name ] );
+		if( $this->is_valid_cache( $cloud_settings, $cloud_cache ) ) {
+			return $cloud_cache;
 		}
 		
 		return false;
@@ -208,36 +389,290 @@ class D3WordCloudWidget_Model
 	
 	
 	/**
-	 * 
+	 * Determines if the cloud cache is valid based on the cloud settings.
+	 * @param  array  $cloud_settings  The current cloud settings.
+	 * @param  array  $cloud_cache  The current cloud cache.
+	 * @return  bool  True if the cache is valid, otherwise False.
 	 */
-	public function get_all_clouds( $process = false )
+	protected function is_valid_cache( $cloud_settings, $cloud_cache )
 	{
-		$clouds = get_option( D3_WORD_CLOUD_WIDGET_CLOUDS, array() );
-		
-		if( ! $clouds || ! is_array( $clouds ) ) {
-			return array();
-		}
-		
-		if( $process ) {
-			foreach( $clouds as &$cloud ) {
-				$cloud = $this->merge_cloud_settings( $cloud );
+		$check = array( 
+			'post_types', 'taxonomies', 'filterby_taxonomy', 'filterby_terms' 
+		);
+		foreach( $check as $c )
+		{
+			if( $cloud_settings[ $c ] != $cloud_cache['settings'][ $c ] ) {
+				return false;
 			}
 		}
 		
-		return $clouds;
+		if( empty( $cloud_cache['datetime'] ) ) {
+			return false;
+		}
+		
+		return $cloud_cache;
 	}
 	
 	
 	/**
-	 * 
+	 * Update the cache for a cloud.
+	 * @param  string  $cloud  The name of the cloud.
+	 * @param  array  $cache  The cache array.
 	 */
-	public function merge_cloud_settings( $options )
+	protected function update_cloud_cache( $cloud_name, $cache )
 	{
-		if( ! is_array($options) ) {
+		update_option( WORD_CLOUD_CACHE . '-' . $cloud_name, $cache );
+	}
+	
+
+	/**
+	 * Remove the cache for a cloud.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 */
+	public function remove_cloud_cache( $cloud_name )
+	{
+		return delete_option( WORD_CLOUD_CACHE . '-' . $cloud_name );
+	}
+	
+
+	/**
+	 * Renames the cache for a cloud.
+	 * @param  string  $old_cloud_name  The old name of the cloud.
+	 * @param  string  $new_cloud_name  The new name of the cloud.
+	 */
+	public function rename_cloud_cache( $old_cloud_name, $new_cloud_name )
+	{
+		if( ! $this->is_existing_cloud_name( $cloud_name ) ) {
+			return false;
+		}
+		
+		$cloud_cache = $this->get_cloud_cache( $old_cloud_name );
+		if( false === $cloud_cache ) {
+			return false;
+		}
+		
+		$this->remove_cloud_cache( $old_cloud_name );
+		$this->update_cloud_cache( $new_cloud_name, $cloud_cache );
+	}
+	
+	
+	/**
+	 * Initialize the cache default values for a cloud.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @return  array|bool  The list of terms for the cache, or False on error.
+	 */
+	public function initialize_cloud_cache( $cloud_name )
+	{
+		$cloud_settings = $this->get_cloud_settings( $cloud_name );
+		if( false === $cloud_settings ) {
+			$this->last_error = 'Cloud does not exist.';
+			return false;
+		}
+		
+		$all_terms = array();
+		$tax_query = array();
+		
+		if( 'none' != $cloud_settings['filterby_taxonomy'] )
+		{
+			$tax_query = array(
+				array(
+					'taxonomy' 	=> $cloud_settings['filterby_taxonomy'],
+					'terms' 	=> explode( ';', $cloud_settings['filterby_terms'] ),
+					'field' 	=> 'slug',
+					'relation'  => 'OR',
+				)
+			);
+		}
+		
+		$q = new WP_Query(
+			array(
+				'post_type' => $cloud_settings['post_types'],
+				'tax_query' => $tax_query,
+				'posts_per_page' => -1,
+			)
+		);
+		
+		while( $q->have_posts() )
+		{
+			$q->the_post();
+			$post_terms = array();
+			
+			foreach( $cloud_settings['taxonomies'] as $tax_name )
+			{
+				$t = get_the_terms( get_the_ID(), $tax_name );
+				if( is_array( $t ) ) {
+					$t = array_map( function( $v ) { return $v->term_id; }, $t );
+					$post_terms = array_merge( $post_terms, $t );
+				}
+			}
+
+			$all_terms = array_merge( $all_terms, $post_terms );
+			$post_terms = null;
+		}
+
+		wp_reset_postdata();			
+		
+		// The term ids should be a unique list.
+		$all_terms = array_unique( $all_terms );		
+		
+		// Set the default cache values.
+		$cache = array(
+			'settings' => array(
+				'post_types'        => $cloud_settings['post_types'],
+				'taxonomies'        => $cloud_settings['taxonomies'],
+				'filterby_taxonomy' => $cloud_settings['filterby_taxonomy'],
+				'filterby_terms'    => $cloud_settings['filterby_terms'],
+			),
+			'datetime' => null,
+			'terms' => array(),
+		);
+		
+		// Update the cache for the cloud.
+		$this->update_cloud_cache( $cloud_name, $cache );
+		
+		// Return the list of terms for the cache.
+		return $all_terms;
+	}
+	
+	
+	/**
+	 * Update/add a term to an existing cloud cache.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @param  int  $term_id  The id of the term.
+	 * @return  int|bool  The number of posts associated with the term on success,
+	 *                    otherwise False.
+	 */
+	public function update_cache_term( $cloud_name, $term_id )
+	{
+		// Check if cloud exists.
+		if( ! $this->is_existing_cloud_name( $cloud_name ) ) {
+			$this->last_error = 'Cloud does not exist.';
+			return false;
+		}
+		
+		// Get the cache.
+		$cloud_cache = $this->get_cloud_cache( $cloud_name );
+		if( false === $cloud_cache ) {
+			$this->last_error = 'Cache does not exist.';
+			return false;
+		}
+		
+		// Get the term.
+		$term = get_term_by( 'term_taxonomy_id', $term_id );
+		if( ! $term ) {
+			$this->last_error = 'Invalid term id.';
+			return false;
+		}
+		
+		// Get the cache settings.
+		$post_types = $cloud_cache['settings']['post_types'];
+		$taxonomies = $cloud_cache['settings']['taxonomies'];
+		$filterby_taxonomy = $cloud_cache['settings']['filterby_taxonomy'];
+		$filterby_terms = $cloud_cache['settings']['filterby_terms'];
+		
+		// Generate the tax_query based on the cache settings.
+		$tax_query = array();
+		
+		if( 'none' != $filterby_taxonomy )
+		{
+			$tax_query = array(
+				'relation'  => 'AND',
+				array(
+					'taxonomy' 	=> $filterby_taxonomy,
+					'terms' 	=> explode( ';', $filterby_terms ),
+					'field' 	=> 'slug',
+					'relation'  => 'OR',
+				),
+			);
+		}
+		
+		$tax_query[] = array(
+			'taxonomy'  => $term->taxonomy,
+			'terms'     => $term_id,
+			'field'     => 'id',
+		);
+		
+		// Get all posts that match the filtered term.
+		$q = new WP_Query(
+			array(
+				'post_type' => $post_types,
+				'tax_query' => $tax_query,
+				'posts_per_page' => -1,
+			)
+		);
+		
+		// Store the number of found posts that match the filtered term.
+		$cloud_cache['terms'][ $term_id ] = $q->found_posts;
+		$this->update_cloud_cache( $cloud_name, $cloud_cache );
+		
+		return $q->found_posts;
+	}
+
+
+	/**
+	 * Sort the terms and set the datetime for a cache.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @return  bool  True if completed successfully, otherwise False.
+	 */
+	public function update_cache_complete( $cloud_name )
+	{
+		// Check if cloud exists.
+		if( ! $this->is_existing_cloud_name( $cloud_name ) ) {
+			$this->last_error = 'Cloud does not exist.';
+			return false;
+		}
+		
+		// Get the cache.
+		$cloud_cache = $this->get_cloud_cache( $cloud_name );
+		if( false === $cloud_cache ) {
+			$this->last_error = 'Cache does not exist.';
+			return false;
+		}
+		
+		// Sort term list.
+		arsort( $cloud_cache['terms'] );
+		
+		// Set the complete datetime.
+		$cloud_cache['datetime'] = date( 'Y-m-d H:i:s' );
+		
+		// Update the cache.
+		$this->update_cloud_cache( $cloud_name, $cloud_cache );
+	}
+	
+	
+	/**
+	 * Verify that the settings for the cloud are valid.  This does not check if the
+	 * name conflicts with another existing cloud.  This is done in the add_cloud and
+	 * update_cloud functions.
+	 * @param  array  $settings  The settings for a cloud.
+	 */
+	protected function verify_cloud_settings( &$settings )
+	{
+		$settings['errors'] = array();
+		
+		// Make sure name is sanitized.
+		$settings['name'] = sanitize_title( $settings['name'] );
+		
+		// Make sure name is not empty.
+		if( empty( $settings['name'] ) ) {
+			$settings['errors']['name'] = 'Please specify a cloud name.';
+		}
+	}
+	
+	
+	/**
+	 * Merge a cloud's settings with the default settings to ensure that all settings
+	 * are set.
+	 * @param  array  $settings  The settings for the cloud.
+	 * @return  array  The complete, merged settings for a cloud.
+	 */
+	public function merge_cloud_settings( $settings )
+	{
+		if( ! is_array( $settings ) ) {
 			return $this->get_default_cloud_settings();
 		}
 		
-		return array_merge( $this->get_default_cloud_settings(), $options );
+		return array_merge( $this->get_default_cloud_settings(), $settings );
 	}
 	
 	
@@ -254,42 +689,41 @@ class D3WordCloudWidget_Model
 		
 		// title
 		$defaults['title'] = '';
-
+		
 		// post types
-		$defaults['post_types'] = array('post');
-
+		$defaults['post_types'] = array( 'post' );
+		
 		// taxonomy types
-		$defaults['taxonomies'] = array('post_tag');
-
+		$defaults['taxonomies'] = array( 'post_tag' );
+		
 		// filter by
-		$defaults['filterby'] = array();
-		$defaults['filterby_taxonomy'] = '';
+		$defaults['filterby_taxonomy'] = 'none';
 		$defaults['filterby_terms'] = '';
-
+		
 		// minimum count
 		$defaults['minimum_count'] = 1;
-
+		
 		// max words (# or none)
 		$defaults['maximum_words'] = 250;
 		
 		// words orientation
 		$defaults['orientation'] = 'horizontal';
-
+		
 		// font_family
 		$defaults['font_family'] = 'Arial';
-
+		
 		// font-size (range or single)
 		$defaults['font_size_type'] = 'range';
-		$defaults['font_size_range'] = array('start' => 10, 'end' => 100);
+		$defaults['font_size_range'] = array( 'start' => 10, 'end' => 100 );
 		$defaults['font_size_single'] = 60;
-
+		
 		// color (spanning, single color, none)
 		$defaults['font_color_type'] = 'none';
 		$defaults['font_color_single'] = '';
 		$defaults['font_color_spanning'] = '';
-
+		
 		// canvas size (height and width)
-		$defaults['canvas_size'] = array('width' => 960, 'height' => 420);
+		$defaults['canvas_size'] = array( 'width' => 960, 'height' => 420 );
 		
 		$defaults['hide_debug'] = 'yes';
 		
@@ -298,7 +732,8 @@ class D3WordCloudWidget_Model
 	
 	
 	/**
-	 * 
+	 * Get the options for the admin interface.
+	 * @return  array  A list of options.
 	 */
 	public function get_options()
 	{
@@ -315,13 +750,13 @@ class D3WordCloudWidget_Model
 	
 	
 	/**
-	 * 
+	 * Prints the main admin interface for add or editing a cloud.
+	 * @param  string  $cloud_name  The name of the cloud.
+	 * @param  array|null  $cloud_settings  The cloud's current settings.
 	 */
-	public function print_edit_form( $cloud_name, $cloud = null )
+	public function print_edit_form( $cloud_name, $cloud_settings = null )
 	{
-		$cloud = $this->merge_cloud_settings( $cloud );
-		
-		extract( $cloud );
+		extract( $this->merge_cloud_settings( $cloud_settings ) );
 		extract( $this->get_options() );
 		?>
 		<input type="hidden" name="name" value="<?php echo $cloud_name; ?>" />
@@ -329,7 +764,7 @@ class D3WordCloudWidget_Model
 		<p>
 		<label for="txt_cloud_settings_name"><?php _e( 'Name:' ); ?></label>
 		<br/>
-		<input type="textbox" name="cloud_settings[name]" value="<?php echo esc_attr( $cloud['name'] ); ?>" />
+		<input type="textbox" name="cloud_settings[name]" value="<?php echo esc_attr( $name ); ?>" />
 		<br/>
 		</p>
 		
@@ -365,7 +800,7 @@ class D3WordCloudWidget_Model
 			<br/>
 		<?php endforeach; ?>
 		</p>
-	
+		
 		<p>
 		<label for="cloud_settings_filterby_taxonomy"><?php _e( 'Filter By:' ); ?></label>
 		<br/>
@@ -460,235 +895,71 @@ class D3WordCloudWidget_Model
 		<?php
 	}
 	
-	
+
 	/**
-	 * 
+	 * Cache all clouds.  **Used for CRON job.**
 	 */
-	public function create_cloud_cache( $cloud_name )
+	public function cache_all_clouds()
 	{
-		$cloud = $this->get_cloud( $cloud_name );
+		$output = WordCloud_Output::get_instance();
+		$output->include_datetime = true;
 		
-		if( ! $cloud ) {
-			$this->last_error = 'Cloud does not exist.';
-			return false;
+		$cloud_list = $this->get_cloud_list();
+		$total = count( $cloud_list );
+		
+		$output->write_line( 'Start caching ' . $total . ' clouds.' );
+		$output->write_line();
+		
+		$count = 1;
+		foreach( $cloud_list as $cloud_name ) {
+			$output->write_line( 'Cloud ' . $count . ' of ' . $total . ': ' . $cloud_name );
+			$this->cache_cloud( $cloud_name );
+			$count++;
 		}
 
-		
-		$all_terms = array();
-		
-		
-		$tax_query = array();
-		if( 'none' != $cloud['filterby_taxonomy'] )
-		{
-			$terms = explode( ';', $cloud['filterby_terms'] );
-			
-			$tax_query = array(
-				array(
-					'taxonomy' 	=> $cloud['filterby_taxonomy'],
-					'terms' 	=> $terms,
-					'field' 	=> 'slug',
-					'relation'  => 'OR',
-				)
-			);
-		}
-			
-		$q = new WP_Query(
-			array(
-				'post_type' => $cloud['post_types'],
-				'tax_query' => $tax_query,
-				'posts_per_page' => -1,
-			)
-		);
-		
-		while( $q->have_posts() )
-		{
-			$q->the_post();
-			$post_terms = array();
-			foreach( $cloud['taxonomies'] as $tax_name )
-			{
-				$t = get_the_terms( get_the_ID(), $tax_name );
-				if( is_array( $t ) ) {
-					$post_terms = array_merge( 
-						$post_terms, 
-						array_map(
-							function( $v ) {
-								return $v->term_id;
-							}, $t 
-						)
-					);
-				}
-			}
-
-			$all_terms = array_merge( $all_terms, $post_terms );
-			$post_terms = null;
-		}
-
-		wp_reset_postdata();			
-		
-		$all_terms = array_unique( $all_terms );		
-		
-		
-		$cache = array();
-		
-		$cache['settings'] = array(
-			'post_types'        => $cloud['post_types'],
-			'taxonomies'        => $cloud['taxonomies'],
-			'filterby_taxonomy' => $cloud['filterby_taxonomy'],
-			'filterby_terms'    => $cloud['filterby_terms'],
-		);
-		$cache['datetime'] = null;                   // completed datetime
-		$cache['terms'] = array();            // cached terms
-		
-		$this->update_cache( $cloud_name, $cache );
-		
-		return $all_terms;
+		$output->write_line( 'Completed caching ' . count( $cloud_list ) . ' clouds.' );
+		$output->write_line();
 	}
 	
 	
 	/**
-	 * 
+	 * Cache a single cloud.  **Used for CRON job.**
+	 * @param  string  $cloud_name  The name of the cloud.
 	 */
-	public function update_cache( $cloud_name, $cache )
+	public function cache_cloud( $cloud_name )
 	{
-		update_option( D3_WORD_CLOUD_WIDGET_CACHE . '_' . $cloud_name, $cache );
-	}
-	
-	
-	/**
-	 * 
-	 */
-	public function get_cache( $cloud_name, $validate = false )
-	{
-		$cache = get_option( D3_WORD_CLOUD_WIDGET_CACHE . '_' . $cloud_name, false );
-		if( ! $validate ) {
-			return $cache;
-		}
+		$output = WordCloud_Output::get_instance();
+		$output->include_datetime = true;
 		
-		if( empty( $cache['datetime'] ) ) {
+		$output->write_line( 'Start caching cloud: ' . $cloud_name );
+		$terms = $this->initialize_cloud_cache( $cloud_name );
+		if( ! $terms ) {
+			$output->write_line( 'ERROR: ' . $this->last_error );
+			$output->write_line();
 			return false;
 		}
 		
-		$cloud = $this->get_cloud( $cloud_name );
-		if( ! $cloud ) {
-			return false;
-		}
-		
-		$check = array( 
-			'post_types', 'taxonomies', 'filterby_taxonomy', 'filterby_terms' 
-		);
-		foreach( $check as $c )
-		{
-			if( $cloud[ $c ] != $cache['settings'][ $c ] ) {
+		$count = 1;
+		$total = count( $terms );
+		foreach( $terms as $term_id )
+		{	
+			$output->write_line( 'Caching term ' . $count . ' of ' . $total . ': ' . $term_id );
+			$status = $this->update_cache_term( $cloud_name, $term_id );
+			if( ! $status ) {
+				$output->write_line( 'ERROR: ' . $this->last_error );
+				$output->write_line();
 				return false;
 			}
+			$count++;
 		}
-		
-		return $cache;
-	}
 
-
-	/**
-	 * 
-	 */
-	public function remove_cache( $cloud_name )
-	{
-		return delete_option( D3_WORD_CLOUD_WIDGET_CACHE . '_' . $cloud_name );
+		$output->write_line( 'Completing caching.' );
+		$this->update_cache_complete( $cloud_name );
+		
+		$output->write_line( 'Completed caching cloud: ' . $cloud_name );
+		$output->write_line();
 	}
 	
-	
-	/**
-	 * 
-	 */
-	public function rename_cache( $old_cloud_name, $new_cloud_name )
-	{
-		$cache = $this->get_cache( $old_cloud_name );
-		if( ! $cache ) {
-			return;
-		}
-		
-		$this->remove_cache( $old_cloud_name );
-		$this->update_cache( $new_cloud_name, $cache );
-	}
-	
-	
-	/**
-	 * 
-	 */
-	public function update_cache_complete( $cloud_name )
-	{
-		$cache = $this->get_cache( $cloud_name );
-		if( ! $cache )  {
-			$this->last_error = 'Cache does not exist.';
-			return false;
-		}
-		
-		$cache['datetime'] = date( 'Y-m-d H:i:s' );
-		$this->update_cache( $cloud_name, $cache );
-	}	
-
-	
-	/**
-	 * 
-	 */
-	public function update_cache_term( $cloud_name, $term_id )
-	{
-		$cache = $this->get_cache( $cloud_name );
-		if( ! $cache )  {
-			$this->last_error = 'Cache does not exist.';
-			return false;
-		}
-		
-		$term = get_term_by( 'term_taxonomy_id', $term_id );
-		if( ! $term ) {
-			$this->last_error = 'Invalid term id.';
-			return false;
-		}
-		
-		$post_types = $cache['settings']['post_types'];
-		$taxonomies = $cache['settings']['taxonomies'];
-		$filterby_taxonomy = $cache['settings']['filterby_taxonomy'];
-		$filterby_terms = $cache['settings']['filterby_terms'];
-		
-		
-		$tax_query = array();
-		if( 'none' != $filterby_taxonomy )
-		{
-			$terms = explode( ';', $filterby_terms );
-			
-			$tax_query = array(
-				'relation'  => 'AND',
-				array(
-					'taxonomy' 	=> $filterby_taxonomy,
-					'terms' 	=> $terms,
-					'field' 	=> 'slug',
-					'relation'  => 'OR',
-				),
-			);
-		}
-		
-		$tax_query[] = array(
-			'taxonomy'  => $term->taxonomy,
-			'terms'     => $term_id,
-			'field'     => 'id',
-		);
-		
-		
-		$q = new WP_Query(
-			array(
-				'post_type' => $cloud['post_types'],
-				'tax_query' => $tax_query,
-				'posts_per_page' => -1,
-			)
-		);
-		
-		
-		$cache['terms'][ $term_id ] = $q->found_posts;
-		$this->update_cache( $cloud_name, $cache );
-		
-		return $q->found_posts;
-	}
-	
-	
-} // class D3WordCloudWidget_Model
-endif; // if( !class_exists('D3WordCloudWidget_Model') ):
+} // class WordCloud_Model
+endif; // if( !class_exists('WordCloud_Model') ):
 

@@ -1,28 +1,28 @@
 <?php
 
-if( !class_exists('D3WordCloudWidget_CloudListTable') )
-	require_once( D3_WORD_CLOUD_WIDGET_PLUGIN_PATH.'/classes/cloud-list-table.php' );
+if( !class_exists('WordCloud_CloudListTable') )
+	require_once( WORD_CLOUD_PLUGIN_PATH.'/classes/cloud-list-table.php' );
 
 
 /**
  * Controls the tab admin page "Clouds > List".
  * 
- * @package    d3-word-cloud-widget
+ * @package    word-cloud
  * @subpackage admin-pages/tabs/users
  * @author     Crystal Barton <atrus1701@gmail.com>
  */
-if( !class_exists('D3WordCloudWidget_CloudsListTabAdminPage') ):
-class D3WordCloudWidget_CloudsListTabAdminPage extends APL_TabAdminPage
+if( !class_exists('WordCloud_CloudsListTabAdminPage') ):
+class WordCloud_CloudsListTabAdminPage extends APL_TabAdminPage
 {
 	/**
-	 * The main model for the D3 Word Cloud Widget.
-	 * @var  D3WordCloudWidget_Model
+	 * The main model for the Word Cloud.
+	 * @var  WordCloud_Model
 	 */	
 	private $model = null;	
 
 	/**
 	 * The Users admin table.
-	 * @var  D3WordCloudWidget_UsersListTable
+	 * @var  WordCloud_UsersListTable
 	 */
 	private $list_table = null;
 	
@@ -40,10 +40,10 @@ class D3WordCloudWidget_CloudsListTabAdminPage extends APL_TabAdminPage
 		$parent,
 		$name = 'list', 
 		$tab_title = 'List', 
-		$page_title = 'Users List' )
+		$page_title = 'Cloud List' )
 	{
 		parent::__construct( $parent, $name, $tab_title, $page_title );
-		$this->model = D3WordCloudWidget_Model::get_instance();
+		$this->model = WordCloud_Model::get_instance();
 	}
 
 	
@@ -52,7 +52,7 @@ class D3WordCloudWidget_CloudsListTabAdminPage extends APL_TabAdminPage
 	 */
 	public function init()
 	{
-		$this->list_table = new D3WordCloudWidget_CloudListTable( $this );
+		$this->list_table = new WordCloud_CloudListTable( $this );
 	}
 	
 	/**
@@ -69,7 +69,7 @@ class D3WordCloudWidget_CloudsListTabAdminPage extends APL_TabAdminPage
 	 */
 	public function add_screen_options()
 	{
-		$this->add_per_page_screen_option( 'd3-word-cloud-widget_clouds_per_page', 'Clouds', 100 );
+		$this->add_per_page_screen_option( 'word-cloud_clouds_per_page', 'Clouds', 100 );
 		$this->add_selectable_columns( $this->list_table->get_selectable_columns() );
 	}
 	
@@ -85,13 +85,15 @@ class D3WordCloudWidget_CloudsListTabAdminPage extends APL_TabAdminPage
 		</a>
 		<?php
 		
+		// Prepare list table.
 		$this->list_table->prepare_items();
-
+		
+		// Display list table form.
 		$this->form_start( 'clouds-table' );
 		$this->list_table->display();
 		$this->form_end();
 	}
 
-} // class D3WordCloudWidget_CloudsListTabAdminPage extends APL_TabAdminPage
-endif; // if( !class_exists('D3WordCloudWidget_CloudsListTabAdminPage') )
+} // class WordCloud_CloudsListTabAdminPage extends APL_TabAdminPage
+endif; // if( !class_exists('WordCloud_CloudsListTabAdminPage') )
 
